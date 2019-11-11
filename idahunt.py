@@ -21,6 +21,7 @@ import subprocess
 import time
 import glob
 import filelock
+import struct
 
 def logmsg(s, end=None, debug=True):
     if not debug:
@@ -45,6 +46,36 @@ def iglob_hidden(*args, **kwargs):
 
 def path_to_module_string(p):
     return p.replace("/", ".").replace("\\", ".")
+
+# Automatically detects the architecture for PE files
+def detect_arch_pe_files(filename):
+    IMAGE_FILE_MACHINE_I386 = 332
+    IMAGE_FILE_MACHINE_IA64 = 512
+    IMAGE_FILE_MACHINE_AMD64 = 34404
+    arch = None
+    f = open(filename, "rb")
+    s = f.read(2)
+    if s != b"MZ":
+        logmsg("Not an EXE file. Ignoring automatic architecture detection")
+    else:
+        f.seek(60)
+        s = f.read(4)
+        header_offset = struct.unpack("<L", s)[0]
+        f.seek(header_offset+4)
+        s = f.read(2)
+        machine = struct.unpack("<H", s)[0]
+        if machine == IMAGE_FILE_MACHINE_I386:
+            arch = 32
+        elif machine == IMAGE_FILE_MACHINE_IA64:
+            arch = 64
+        elif machine == IMAGE_FILE_MACHINE_AMD64:
+            arch = 64
+        else:
+            arch = None
+            logmsg("Unknown architecture detected")
+            sys.exit(1)
+        f.close()
+    return arch
 
 # Does the initial auto-analysis when we first open a file in IDA
 # Returns False if does not do anything, the subprocess if it was created
@@ -188,6 +219,10 @@ def do_dir(inputdir, filter, verbose, max_ida, do_file, ida_args=None, script=No
             if res == None:
                 continue
             infile, arch = res
+
+            if arch == "auto":
+                arch = detect_arch_pe_files(f)
+
             if arch == 32:
                 ida_executable = IDA32
                 idbfile = f_noext + ".idb"
@@ -281,6 +316,9 @@ if __name__ == "__main__":
                         help='Maximum number of instances of IDA to run at a time (default: 10)')
     parser.add_argument('--list-only', dest='list_only', default=False, action="store_true",
                         help='List only what files would be handled without executing IDA')
+    parser.add_argument('--version', dest='ida_version', default="7.4",
+                        help='Override IDA version (e.g. "7.4"). This is used to find the path \
+                        of IDA on Windows.')
     args = parser.parse_args()
 
     if not args.analyse and not args.cleanup_temporary and \
@@ -292,6 +330,7 @@ if __name__ == "__main__":
     if args.list_only:
         logmsg("Simulating only...")
 
+    ida_version = args.ida_version
     ida32_found = False
     try:
         IDA32 = os.environ["IDA32"]
@@ -312,7 +351,7 @@ if __name__ == "__main__":
                     pass
         else:
             #IDA32="C:\\Program Files (x86)\\IDA 6.95\\idaq.exe"
-            IDA32="C:\\Program Files\\IDA 7.2\\ida.exe"
+            IDA32="C:\\Program Files\\IDA " + ida_version + "\\ida.exe"
             # XXX - Test the file exists here... We shouldn't rely on a version
             ida32_found = True
 
@@ -336,7 +375,7 @@ if __name__ == "__main__":
                     pass
         else:
             #IDA64="C:\\Program Files (x86)\\IDA 6.95\\idaq64.exe"
-            IDA64="C:\\Program Files\\IDA 7.2\\ida64.exe"
+            IDA64="C:\\Program Files\\IDA " + ida_version + "\\ida64.exe"
             # XXX - Test the file exists here... We shouldn't rely on a version
             ida64_found = True
 
